@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neuro Lab</title>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#050a18;--ink:#d6f3ff;--dim:#8bb0c4;--cyan:#3de1ff;--amber:#ffb347;--panel:rgba(8,20,40,.74);--line:rgba(61,225,255,.28)}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:"Chakra Petch","Segoe UI",system-ui,sans-serif;overflow:hidden}
+#c{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
+.panel{position:fixed;background:var(--panel);border:1px solid var(--line);border-radius:10px;backdrop-filter:blur(6px)}
+#top{top:16px;left:16px;padding:12px;width:min(420px,calc(100% - 32px))}
+#f{display:flex;gap:8px}
+input{flex:1;min-width:0;background:transparent;border:1px solid var(--line);border-radius:6px;color:var(--ink);padding:9px 11px;font:inherit}
+button{font:inherit;color:var(--ink);background:rgba(61,225,255,.12);border:1px solid var(--cyan);border-radius:6px;padding:8px 12px;cursor:pointer}
+button:hover{background:rgba(61,225,255,.24)}
+:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+.chips{display:flex;gap:8px;margin-top:8px}
+.chips button{padding:4px 10px;font-size:.85rem;border-color:var(--line);color:var(--dim)}
+#info{left:16px;bottom:16px;padding:16px 18px;width:min(420px,calc(100% - 32px))}
+#info h1{margin:0 0 6px;font-size:1.35rem;font-weight:600;color:var(--cyan)}
+#info p{margin:0 0 8px;line-height:1.5}
+#info ul{margin:0;padding-left:18px;color:var(--dim);line-height:1.5}
+#cam{right:16px;bottom:16px;padding:12px;width:244px}
+#pip{position:relative;width:220px;aspect-ratio:4/3;margin-bottom:8px;border-radius:6px;overflow:hidden;background:#000}
+#pip video,#pip canvas{position:absolute;inset:0;width:100%;height:100%;transform:scaleX(-1);object-fit:cover}
+#go{width:100%}
+#st{margin:8px 0 0;font-size:.85rem;color:var(--dim);line-height:1.4}
+#zr{margin-top:6px;font-size:.95rem;color:var(--amber)}
+select{background:transparent;border:1px solid var(--line);color:var(--ink);padding:5px 8px;border-radius:6px;font:inherit}
+select option{background:#0a1428}
+#ex[aria-pressed="true"]{background:rgba(255,179,71,.25);border-color:var(--amber)}
+#labels{position:fixed;inset:0;pointer-events:none;overflow:hidden}
+#labels div{position:absolute;left:0;top:0;font-size:.78rem;white-space:nowrap;text-shadow:0 0 6px #000,0 0 3px #000}
+#regions{top:16px;right:16px;width:244px;max-height:calc(100% - 350px);overflow:auto;padding:8px}
+#regions button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:0;background:transparent;padding:5px 6px;font-size:.88rem}
+#regions button[aria-pressed="true"]{background:rgba(61,225,255,.22)}
+#regions i{width:10px;height:10px;border-radius:50%;flex:none}
+@media(max-width:700px){#cam{bottom:auto;top:130px;width:170px}#pip{width:146px}#regions{display:none}}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="top" class="panel">
+  <form id="f">
+    <input id="q" placeholder="Try: brain, hippocampus, vision, neural network" autocomplete="off" aria-label="Search a topic">
+    <button type="submit">Search</button>
+  </form>
+  <div class="chips">
+    <button type="button" data-q="brain">brain</button>
+    <button type="button" data-q="neural network">neural network</button>
+    <button type="button" data-q="data center">data center</button>
+    <button type="button" id="ex" aria-pressed="false">Separate parts</button>
+  </div>
+  <div class="chips"><select id="eng" aria-label="Car engines"><option value="">Car engines…</option></select></div>
+</div>
+
+<aside id="info" class="panel">
+  <h1 id="t"></h1><p id="d"></p><ul id="l"></ul>
+</aside>
+
+<div id="labels"></div>
+<div id="regions" class="panel" aria-label="Brain regions"></div>
+
+<div id="cam" class="panel">
+  <div id="pip" hidden><video id="v" playsinline muted></video><canvas id="o" width="640" height="480"></canvas></div>
+  <button id="go" type="button">Turn on hand zoom</button>
+  <p id="st">Scroll wheel and drag also work without a camera.</p>
+  <div id="zr">Zoom 1.0×</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js"></script>
+<script>
+/* ---------- topics ---------- */
+const TOPICS = {
+  brain: {
+    title: "Human brain",
+    text: "Neurons pass signals as electrical spikes along their axons. At each synapse the spike becomes a chemical message to the next neuron. The amber pulses are those signals hopping from cell to cell.",
+    facts: ["About 86 billion neurons, each linked to thousands of others", "Learning strengthens the synapses that get used most", "Different regions handle vision, movement, memory and language"],
+    keys: ["brain", "neuron", "human", "synapse", "cortex", "mind"]
+  },
+  ai: {
+    title: "Artificial neural network",
+    text: "Inputs enter on the left. Each layer multiplies them by weights, adds them up and applies an activation function. The signal moves forward until the output layer gives a prediction.",
+    facts: ["Training adjusts the weights with backpropagation", "More layers let the network learn more abstract patterns", "LLMs use this idea at huge scale with transformer layers"],
+    keys: ["ai", "network", "machine", "deep", "model", "llm", "artificial", "neural"]
+  },
+  dc: {
+    title: "AI data center",
+    text: "This is where AI models actually run. A request enters through the gateway, crosses the network switches and reaches a GPU server, which does the neural-network maths and sends the answer back. Storage, cooling and power keep it all running.",
+    facts: ["Each rack stacks servers under one network switch", "Both training a model and answering questions run on GPUs", "Click any part to see what it does, or press Separate parts"],
+    keys: ["data center", "datacenter", "data centre", "server farm"]
+  }
+};
+
+const REGIONS = [
+ {id:'prefrontal',off:[1.2, 0.6, 4],title:'Prefrontal cortex',color:'#ff8a80',keys:['prefrontal','frontal','planning'],text:'Sits behind the forehead. Plans, makes decisions, controls impulses and holds information in working memory.',facts:['It is among the last regions to fully mature, in the mid-20s.']},
+ {id:'motor',off:[1.5, 3, 2],title:'Motor cortex',color:'#ffab40',keys:['motor','movement'],text:'A strip at the back of the frontal lobe that sends commands to your muscles to start voluntary movement.',facts:['Body parts map onto it in order; hands and face take up the most space.']},
+ {id:'sensory',off:[1.5, 3.6, -0.5],title:'Somatosensory cortex',color:'#ffe066',keys:['somatosensory','sensory','touch'],text:'Just behind the motor strip. Receives touch, pressure, temperature and pain signals from the body.',facts:['Fingertips and lips get far more cortex than the back does.']},
+ {id:'parietal',off:[1.5, 3, -3.5],title:'Parietal lobe',color:'#b2ff59',keys:['parietal'],text:'Combines the senses into a map of space, so you know where objects and your own body are.',facts:['Damage can make a person ignore one side of the space around them.']},
+ {id:'occipital',off:[1.2, 0.4, -5],title:'Occipital lobe (visual cortex)',color:'#3ef0b0',keys:['occipital','visual','vision'],text:'At the back of the head. Processes what the eyes see: edges, motion, colour and shapes.',facts:['Each hemisphere handles the opposite half of your visual field.']},
+ {id:'temporal',off:[4, -2.2, 0],title:'Temporal lobe',color:'#40c4ff',keys:['temporal','hearing','auditory','language'],text:'Handles hearing, recognising speech, faces and objects, and works with the hippocampus on memory.',facts:['Wernicke’s area, key for understanding speech, is usually in the left temporal lobe.']},
+ {id:'cerebellum',off:[0, -3, -5],title:'Cerebellum',color:'#7c8cff',keys:['cerebellum','balance','coordination'],text:'At the back, below the cerebrum. Fine-tunes movement, balance and timing.',facts:['It holds about 80% of the brain’s neurons in a small part of its volume.']},
+ {id:'brainstem',off:[0,-1.2,-.8],title:'Brainstem',color:'#b388ff',keys:['brainstem','brain stem','pons','midbrain'],text:'Midbrain and pons, sitting above the medulla. Relays signals between the brain and spinal cord and helps control sleep, alertness and eye movements.',facts:['Almost every signal between brain and body passes through it.']},
+ {id:'medulla',off:[0,-2.6,-1.2],title:'Medulla oblongata',color:'#d1c4e9',keys:['medulla','oblongata'],text:'The lowest part of the brainstem, where the brain joins the spinal cord. Automatically controls breathing, heart rate, blood pressure and reflexes such as swallowing, coughing and vomiting.',facts:['Most motor fibres cross to the opposite side here, so each hemisphere controls the opposite side of the body.']},
+ {id:'spinalcord',off:[0,-4.2,-1.6],title:'Spinal cord',color:'#a5d6a7',keys:['spinal','reflex'],text:'A bundle of nerve fibres about 45 cm long running down the spine. Carries commands from the brain to the body and sensations back up, and handles quick reflexes on its own.',facts:['Pulling your hand off something hot is a reflex run by the spinal cord, before the signal reaches your brain.']},
+ {id:'eye',off:[2.2,.5,3],title:'Eye and optic nerve',color:'#ffcc80',keys:['eye','retina','optic'],text:'The lens focuses light onto the retina, where light-sensing cells turn it into electrical signals. The optic nerve carries them to the thalamus and then the visual cortex at the back of the brain.',facts:['The retina grows out of the developing brain, so it is technically part of the central nervous system.']},
+ {id:'thalamus',off:[0.8, 1.2, 0],title:'Thalamus',color:'#f48fff',keys:['thalamus'],text:'The relay station. Sends nearly all sensory signals on to the right part of the cortex.',facts:['Smell is the main sense that skips this relay.']},
+ {id:'hypothalamus',off:[0, -1.8, 2.8],title:'Hypothalamus',color:'#ff80ab',keys:['hypothalamus','pituitary','hunger'],text:'Small but vital. Controls body temperature, hunger, thirst, sleep and hormones through the pituitary gland.',facts:['It is roughly the size of an almond.']},
+ {id:'hippocampus',off:[3.2, -1, -1.8],title:'Hippocampus',color:'#ff5252',keys:['hippocampus','memory'],text:'Forms new long-term memories and helps you navigate places.',facts:['Patient H.M. could no longer make new memories after it was removed.']},
+ {id:'amygdala',off:[3, -1.6, 2.2],title:'Amygdala',color:'#ff6e40',keys:['amygdala','fear','emotion'],text:'Almond-shaped clusters that tag experiences with emotion, especially fear, and prepare the body to react.',facts:['It can set off an alarm response before you consciously know why.']},
+ {id:'basalganglia',off:[2.2, 1.8, 1.6],title:'Basal ganglia',color:'#ffffff',keys:['basal ganglia','striatum','habit'],text:'Deep clusters that help start and smooth voluntary movements and build habits.',facts:['Parkinson’s disease involves loss of the dopamine cells that feed this circuit.']},
+ {id:'callosum',off:[0, 5.6, 0],title:'Corpus callosum',color:'#cfd8dc',keys:['corpus callosum','callosum'],text:'A thick band of about 200 million fibres linking the left and right hemispheres so they can share information.',facts:['Cutting it (“split-brain” surgery) is used for rare, severe epilepsy.']},
+ {id:'gateway',scene:'dc',off:[0,4,0],title:'Gateway (firewall, load balancer)',color:'#ffd54f',keys:['gateway','load balancer','firewall','internet'],text:'Every request from the internet arrives here first. The firewall filters traffic and the load balancer spreads requests across the servers so none is overloaded.',facts:['A load balancer can route around a failed server without users noticing.']},
+ {id:'spine',scene:'dc',off:[0,2.4,0],title:'Spine switches',color:'#40c4ff',keys:['spine','core switch'],text:'The core of the data center network. Every rack-level switch connects to every spine switch, so data has many possible paths and any server can reach any other quickly.',facts:['This leaf-and-spine layout keeps the delay between any two servers about the same.']},
+ {id:'leaf',scene:'dc',off:[0,.8,0],title:'Top-of-rack switches',color:'#7c8cff',keys:['leaf','top-of-rack','top of rack'],text:'One switch at the top of each rack connects its servers to the spine. Traffic between servers in the same rack never has to leave the rack.',facts:['Links at this level commonly run at 100 gigabits per second or faster.']},
+ {id:'gpu',scene:'dc',off:[0,-1,0],title:'GPU servers',color:'#76ff03',keys:['gpu','server','compute','inference'],text:'Where the AI actually runs. GPUs do thousands of multiplications in parallel, which is exactly the maths a neural network needs to learn and to answer questions.',facts:['Training a large model can use thousands of GPUs working together for weeks.']},
+ {id:'storage',scene:'dc',off:[0,-3,0],title:'Storage servers',color:'#ffab40',keys:['storage','disk','database','weights'],text:'Hold the training data, the saved model weights and user data. Fast drives feed data to the GPUs so they are never left waiting.',facts:['Model weights are just huge files of numbers; the largest take hundreds of gigabytes.']},
+ {id:'cooling',scene:'dc',off:[0,-4.5,0],title:'Cooling system',color:'#80deea',keys:['cooling','coolant','heat'],text:'GPUs turn almost all the electricity they use into heat. Chilled air or liquid circulating through the racks carries that heat away.',facts:['Many AI data centers use liquid cooling because air alone cannot remove the heat from dense GPU racks.']},
+ {id:'power',scene:'dc',off:[3,0,0],title:'Power supply',color:'#ff5252',keys:['power supply','grid','generator'],text:'Takes electricity from the grid, converts it, and backs it up with batteries and generators so the servers never lose power.',facts:['A rack full of AI GPUs can draw several times the power of a traditional server rack.']}
+];
+const ENG_REGIONS = [
+ ['intake','Intake: air filter and manifold','#4fc3f7',['intake','air filter','throttle'],'Air is drawn through the filter and manifold to every cylinder. The throttle, or a turbocharger, controls how much air gets in.','More air lets more fuel burn, which means more power.',[0,2,-3],'i4'],
+ ['valvetrain','Valves and camshafts','#ffd54f',['valve','camshaft','cam shaft'],'Camshafts open and close the intake and exhaust valves at exactly the right moment, driven by the crankshaft through a belt or chain.','At 3,000 rpm each valve opens about 1,500 times a minute.',[0,3.5,0],'i4'],
+ ['ignition','Spark plugs / glow plugs','#ffffff',['spark','ignition','glow plug'],'In a petrol engine a spark ignites the compressed air and fuel. A diesel has no spark: compression heats the air enough to ignite the fuel, and glow plugs only help cold starts.','At 3,000 rpm each spark plug fires about 25 times a second.',[0,5,2],'i4'],
+ ['cylinders','Cylinders and pistons','#ff7043',['cylinder','piston','combustion'],'Fuel burns above the piston and the expanding gas pushes it down. The four strokes repeat in turn: intake, compression, power, exhaust.','At 3,000 rpm each piston changes direction 6,000 times a minute.',[0,0,0],'i4'],
+ ['crankshaft','Crankshaft','#b0bec5',['crankshaft','crank shaft','crank'],'Turns the pistons’ up-and-down push into rotation, which flows on to the flywheel and gearbox.','Counterweights on it balance the pistons so the engine runs smoothly.',[0,-3,0],'i4'],
+ ['exhaust','Exhaust system','#d7ccc8',['exhaust','tailpipe','catalytic'],'Burnt gas leaves through the exhaust manifold, then the catalytic converter and silencer, which clean the gas and cut the noise.','A catalytic converter turns most harmful gases into carbon dioxide, water and nitrogen.',[0,2,3.5],'i4'],
+ ['turbo','Turbocharger','#e040fb',['turbo'],'Exhaust gas spins a turbine that drives a compressor, forcing more air into the engine so a smaller engine makes more power.','Turbochargers can spin faster than 100,000 rpm.',[0,3,0],'diesel'],
+ ['flywheel','Flywheel and gearbox','#9fa8da',['flywheel','gearbox','transmission'],'The heavy flywheel smooths out the engine’s separate pulses of power before the gearbox passes them to the wheels.','Hybrids add an electric motor at this point in the drivetrain.',[3,-1,0],'i4'],
+ ['wankelhousing','Rotor housing','#ffab40',['rotor housing','housing','epitrochoid'],'The oval chamber the rotor turns in. Intake, compression, combustion and exhaust all happen in different parts of it at the same time.','Ports in the housing replace the valves of a piston engine.',[0,0,0],'rotary'],
+ ['wankelrotor','Triangular rotor','#ff5252',['triangular rotor','apex seal'],'A rounded triangle that spins inside the housing. Each of its three faces completes a full engine cycle on every turn.','The seals at its three tips are the hardest part to keep sealed, a famous weak point.',[0,2.2,0],'rotary'],
+ ['eshaft','Eccentric shaft','#b388ff',['eccentric'],'Replaces the crankshaft. The rotor rides on an off-centre lobe, so its push turns the shaft.','The shaft turns three times for every turn of the rotor.',[0,-2.5,0],'rotary'],
+ ['stator','Stator','#ff6e40',['stator'],'The fixed outer ring of copper coils. Alternating current in the coils makes a rotating magnetic field.','No fuel burns: the magnetic field itself does the pushing.',[0,2.5,0],'electric'],
+ ['rotor','Rotor and shaft','#40c4ff',['rotor'],'The spinning part, pulled around by the stator’s rotating magnetic field. It turns the shaft that drives the wheels.','An electric motor gives its full pushing force from zero rpm, which is why EVs accelerate so quickly.',[0,-.5,0],'electric'],
+ ['inverter','Inverter','#ffea00',['inverter'],'Converts the battery’s direct current into the three-phase alternating current the motor needs, and sets the speed by changing its frequency.','When you brake it can run in reverse and send energy back into the battery.',[0,3.5,0],'electric'],
+ ['battery','Battery pack','#76ff03',['battery'],'Thousands of lithium-ion cells grouped into modules store the energy, usually under the floor.','Keeping the heavy pack low gives an EV a low centre of gravity.',[0,-2.5,0],'electric'],
+ ['reduction','Reduction gear','#cfd8dc',['reduction gear','single speed'],'Most EVs use one fixed gear that lowers the motor’s very high rpm to wheel speed.','Electric motors can spin faster than 15,000 rpm.',[3,0,0],'electric'],
+ ['h2tank','Hydrogen tank','#80d8ff',['hydrogen tank','h2 tank'],'Stores compressed hydrogen, typically at about 700 bar, in strong carbon-fibre tanks.','Refuelling takes only a few minutes.',[2.5,-1,0],'fuelcell'],
+ ['fuelcell','Fuel cell stack','#1de9b6',['fuel cell'],'Hydrogen and oxygen from the air react across a membrane to make electricity. The only exhaust is water.','A stack joins hundreds of thin cells in series.',[1.5,1.8,0],'fuelcell']
+];
+REGIONS.push(...ENG_REGIONS.map(a => ({id: a[0], scene: 'engine', home: a[7], title: a[1], color: a[2], keys: a[3], text: a[4], facts: [a[5]], off: a[6]})));
+const REGION_BY_ID = {};
+REGIONS.forEach(r => { const c = new THREE.Color(r.color); r.rgb = [c.r, c.g, c.b]; r.scene = r.scene || 'brain'; r.home = r.home || r.scene; REGION_BY_ID[r.id] = r; });
+
+/* ---------- three.js setup ---------- */
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({canvas, antialias: true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x050a18);
+scene.fog = new THREE.FogExp2(0x050a18, 0.03);
+const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 200);
+const BASE = 15;
+let zoom = 1, zoomTarget = 1;
+function resize(){
+  renderer.setSize(innerWidth, innerHeight, false);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+
+function glowTexture(){
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d');
+  const r = g.createRadialGradient(32,32,0,32,32,32);
+  r.addColorStop(0,'rgba(255,255,255,1)'); r.addColorStop(.25,'rgba(255,255,255,.55)'); r.addColorStop(1,'rgba(255,255,255,0)');
+  g.fillStyle = r; g.fillRect(0,0,64,64);
+  return new THREE.CanvasTexture(c);
+}
+const GLOW = glowTexture();
+const rnd = n => Math.floor(Math.random() * n);
+
+/* ---------- graph builders ---------- */
+function lobe(p){
+  if (p.z > 1.7) return 'prefrontal';
+  if (p.y > .9){ if (p.z > .5) return 'motor'; if (p.z > -.7) return 'sensory'; return p.z > -2 ? 'parietal' : 'occipital'; }
+  return p.z > -2 ? 'temporal' : 'occipital';
+}
+function buildBrain(){
+  const nodes = [];
+  while (nodes.length < 300){
+    const side = Math.random() < .5 ? -1 : 1;
+    const u = Math.random()*2-1, t = Math.random()*Math.PI*2, s = Math.sqrt(1-u*u);
+    const x = s*Math.cos(t), y = u, z = s*Math.sin(t);
+    const wr = 1 + .12*Math.sin(x*7+y*5)*Math.sin(z*6+y*4);
+    const depth = Math.random() < .72 ? 1 : .5 + Math.random()*.4;
+    const p = new THREE.Vector3(side*1.35 + x*2.3*wr*depth, y*2.5*wr*depth*(y<0?.75:1) + .4, z*3.3*wr*depth);
+    if (p.x*side < .25) continue;
+    nodes.push(p);
+  }
+  for (let i = 0; i < 45; i++){ // cerebellum
+    const u = Math.random()*2-1, t = Math.random()*Math.PI*2, s = Math.sqrt(1-u*u);
+    nodes.push(new THREE.Vector3(s*Math.cos(t)*1.7, u*.9-1.9, s*Math.sin(t)*1.2-2.7));
+  }
+  const reg = nodes.map((p, i) => i >= 300 ? 'cerebellum' : lobe(p));
+  const blob = (id, cx, cy, cz, rx, ry, rz, n, mirror) => (mirror ? [-1, 1] : [1]).forEach(sd => {
+    for (let k = 0; k < n; k++){
+      const u = Math.random()*2-1, t = Math.random()*Math.PI*2, s = Math.sqrt(1-u*u);
+      nodes.push(new THREE.Vector3(sd*cx + s*Math.cos(t)*rx, cy + u*ry, cz + s*Math.sin(t)*rz)); reg.push(id);
+    }
+  });
+  blob('thalamus', .6, .5, 0, .35, .35, .45, 8, true);
+  blob('hypothalamus', 0, -.3, .6, .35, .3, .3, 6, false);
+  blob('hippocampus', 1.9, -.4, -.4, .3, .3, 1, 10, true);
+  blob('amygdala', 1.7, -.6, 1, .3, .3, .3, 6, true);
+  blob('basalganglia', 1.3, .8, .8, .5, .5, .6, 10, true);
+  blob('callosum', 0, 1.6, 0, .9, .1, 1.5, 16, false);
+  blob('brainstem', 0, -1.9, -1.2, .35, .6, .35, 10, false);
+  blob('medulla', 0, -3.0, -1.2, .3, .5, .3, 8, false);
+  blob('spinalcord', 0, -4.9, -1.2, .18, 1.4, .18, 16, false);
+  blob('eye', 1.1, -.9, 4.4, .55, .55, .55, 14, true);
+  blob('eye', .7, -.6, 3.7, .12, .12, .5, 4, true);
+  const adj = nodes.map(() => []), seen = new Set(), edges = [];
+  nodes.forEach((p, i) => {
+    const near = nodes.map((q, j) => [j, p.distanceToSquared(q)]).filter(a => a[0] !== i).sort((a,b) => a[1]-b[1]).slice(0, 4);
+    near.forEach(([j]) => {
+      const k = i < j ? i+'-'+j : j+'-'+i;
+      if (seen.has(k)) return; seen.add(k);
+      edges.push([i, j]); adj[i].push(j); adj[j].push(i);
+    });
+  });
+  return {nodes, edges, adj, directed: false, reg, starts: nodes.map((_, i) => i), speed: 2.4, pulses: 80, lineColor: 0x3de1ff};
+}
+function buildAI(){
+  const sizes = [4, 7, 7, 7, 3], nodes = [], layers = [];
+  sizes.forEach((n, L) => {
+    const ids = [];
+    for (let i = 0; i < n; i++){
+      ids.push(nodes.length);
+      nodes.push(new THREE.Vector3((L-(sizes.length-1)/2)*3.2, (i-(n-1)/2)*1.5, Math.sin(i*1.7+L)*.6));
+    }
+    layers.push(ids);
+  });
+  const adj = nodes.map(() => []), edges = [];
+  for (let L = 0; L < layers.length-1; L++)
+    layers[L].forEach(a => layers[L+1].forEach(b => { edges.push([a, b]); adj[a].push(b); }));
+  return {nodes, edges, adj, directed: true, starts: layers[0], speed: .9, pulses: 45, lineColor: 0x5b8cff};
+}
+
+function buildDC(){
+  const nodes = [], reg = [], adj = [], edges = [];
+  const add = (id, x, y, z) => { nodes.push(new THREE.Vector3(x, y, z)); reg.push(id); adj.push([]); return nodes.length - 1; };
+  const link = (a, b) => { edges.push([a, b]); adj[a].push(b); };
+  const gw = [-1.5, 0, 1.5].map(x => add('gateway', x, 5, 0));
+  const sp = [-4.5, -1.5, 1.5, 4.5].map(x => add('spine', x, 3.3, 0));
+  gw.forEach(a => sp.forEach(b => link(a, b)));
+  const leaves = [], stores = [];
+  for (let i = 0; i < 8; i++){
+    const x = (i - 3.5) * 2, z = (i % 2 ? 1 : -1);
+    const lf = add('leaf', x, 1.6, z); leaves.push(lf);
+    sp.forEach(sw => link(sw, lf));
+    for (let k = 0; k < 4; k++) link(lf, add('gpu', x, .5 - k*.85, z));
+    const st = add('storage', x, -3.1, z); stores.push(st); link(lf, st);
+  }
+  [-5, 0, 5].forEach(x => { const c = add('cooling', x, -4.8, 0); stores.forEach(st => { if (Math.abs(nodes[st].x - x) < 3.1) link(c, st); }); });
+  [-9, 9].forEach(x => { const pw = add('power', x, 1, 0); leaves.forEach(lf => { if (nodes[lf].x * x > 0) link(pw, lf); }); });
+  return {nodes, edges, adj, directed: true, reg, starts: gw, speed: 1.1, pulses: 70, lineColor: 0x6fb8ff};
+}
+
+function mk(){
+  const nodes = [], reg = [], adj = [], edges = [];
+  const add = (id, x, y, z) => { nodes.push(new THREE.Vector3(x, y, z)); reg.push(id); adj.push([]); return nodes.length - 1; };
+  const link = (a, b) => { edges.push([a, b]); adj[a].push(b); };
+  const ring = (id, x, r, n) => Array.from({length: n}, (_, i) => add(id, x, r*Math.cos(i*2*Math.PI/n), r*Math.sin(i*2*Math.PI/n)));
+  return {nodes, reg, adj, edges, add, link, ring};
+}
+const fin = (m, starts, speed, pulses) => ({nodes: m.nodes, edges: m.edges, adj: m.adj, reg: m.reg, directed: true, starts, speed, pulses, lineColor: 0x9fd8ff});
+
+function buildICE(cfg){
+  const m = mk(), {add, link, ring, nodes} = m, R = Math.PI/180;
+  const nmax = Math.max(...cfg.banks.map(b => b[1])), xe = (nmax - 1)*.85 + .6;
+  const air = add('intake', -xe - 2.2, 5, 0), crank = [], coll = [], starts = [air];
+  let comp = air;
+  if (cfg.turbo){ comp = add('turbo', -xe - 1, 5, 0); link(air, comp); }
+  cfg.banks.forEach(([deg, n], bi) => {
+    const a = deg*R, s = deg < 0 ? -1 : 1, st = (bi % 2)*.55, ex = [];
+    const P = (x, t, o) => [x, t*Math.cos(a) - o*Math.sin(a), t*Math.sin(a) + o*Math.cos(a)];
+    for (let i = 0; i < n; i++){
+      const x = (i - (n - 1)/2)*1.7 + st;
+      const inl = add('intake', ...P(x, 3.7, -s*.9)), vi = add('valvetrain', ...P(x, 3.1, -s*.35)), ve = add('valvetrain', ...P(x, 3.1, s*.35)),
+        cam = add('valvetrain', ...P(x, 3.9, 0)), sp = add('ignition', ...P(x, 3.3, 0)), top = add('cylinders', ...P(x, 2.6, 0)),
+        pis = add('cylinders', ...P(x, 1.6, 0)), exh = add('exhaust', ...P(x, 3.7, s*.9)), cr = add('crankshaft', x, 0, 0);
+      link(comp, inl); link(inl, vi); link(vi, top); link(top, pis); link(pis, cr); link(top, ve); link(ve, exh);
+      link(cam, vi); link(cam, ve); link(sp, top);
+      ex.push(exh); crank.push(cr);
+    }
+    const c = add('exhaust', ...P(st, 4.5, s*1.9)); ex.forEach(e => link(e, c)); coll.push(c);
+  });
+  crank.sort((p, q) => nodes[p].x - nodes[q].x);
+  for (let i = 0; i < crank.length - 1; i++) link(crank[i], crank[i+1]);
+  const fx = nodes[crank[crank.length - 1]].x + 1.3, fw = ring('flywheel', fx, 1.1, 6);
+  link(crank[crank.length - 1], fw[0]);
+  for (let i = 0; i < 5; i++) link(fw[i], fw[i+1]);
+  const gear = add('flywheel', fx + (cfg.hybrid ? 4 : 2.3), 0, 0), tail = add('exhaust', fx + .5, -2.6, 2.4);
+  const tb = cfg.turbo ? add('turbo', 0, 6.4, 0) : null;
+  coll.forEach(c => link(c, tb === null ? tail : tb));
+  if (tb !== null) link(tb, tail);
+  if (cfg.hybrid){
+    const bat = Array.from({length: 6}, (_, i) => add('battery', (i - 2.5)*.9, -3.6, 0));
+    const inv = add('inverter', fx + 1.2, -2.2, 0), st = ring('stator', fx + 2.4, 1.1, 8), ro = ring('rotor', fx + 2.4, .55, 4);
+    bat.forEach(b => link(b, inv));
+    st.forEach((q, i) => { link(inv, q); link(q, ro[i % 4]); });
+    ro.forEach(r => link(r, gear)); link(fw[5], gear); starts.push(...bat);
+  } else link(fw[5], gear);
+  return fin(m, starts, 1.6, Math.min((40 + nodes.length/3) | 0, 110));
+}
+
+function buildRotary(){
+  const m = mk(), {add, link} = m, T = Math.PI*2, D = Math.PI/180;
+  const air = add('intake', -4.6, 3.4, 0), tail = add('exhaust', 5.6, -3, 2), es = [];
+  [-1.4, 1.4].forEach(x => {
+    const h = Array.from({length: 14}, (_, k) => { const th = k*T/14; return add('wankelhousing', x, 1.45*Math.sin(th), 2.1*Math.cos(th)*(1 + .1*Math.cos(2*th))); });
+    const o = [7, 8, 9, 10, 11, 12, 13, 0, 1, 2, 3, 4].map(k => h[k]);
+    for (let i = 0; i < 11; i++) link(o[i], o[i+1]);
+    const inn = add('intake', x, 0, -3.4), sp = add('ignition', x, .5, 3.1), ex = add('exhaust', x, 2.5, -.5), e = add('eshaft', x, .45, 0);
+    link(air, inn); link(inn, o[0]); link(sp, o[7]); link(o[11], ex); link(ex, tail);
+    [90, 210, 330].forEach((d, i) => {
+      const ap = add('wankelrotor', x, 1.3*Math.sin(d*D), 1.3*Math.cos(d*D)), md = add('wankelrotor', x, .8*Math.sin((d + 60)*D), .8*Math.cos((d + 60)*D));
+      link(o[[3, 6, 9][i]], ap); link(ap, md); link(md, e);
+    });
+    es.push(e);
+  });
+  link(es[0], es[1]);
+  const o1 = add('eshaft', 3.2, 0, 0), o2 = add('eshaft', 4.6, 0, 0);
+  link(es[1], o1); link(o1, o2);
+  return fin(m, [air], 1.4, 60);
+}
+
+function buildEV(fc){
+  const m = mk(), {add, link, ring} = m, bat = [];
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 6; c++) bat.push(add('battery', (c - 2.5) + .5, -3, (r - 1)*1.2));
+  const inv = [0, 1, 2].map(i => add('inverter', 2.2, (i - 1)*.8, 0));
+  bat.forEach((b, i) => link(b, inv[Math.floor(i/6)]));
+  const st = ring('stator', 4.2, 1.5, 18), ro = ring('rotor', 4.2, .8, 10);
+  const sh = [5, 5.8].map(x => add('rotor', x, 0, 0)), rd = [6.8, 7.6, 8.4].map((x, i) => add('reduction', x, i % 2 ? .4 : -.4, 0));
+  st.forEach((q, i) => { link(inv[i % 3], q); link(q, ro[Math.round(i*10/18) % 10]); });
+  ro.forEach(r => link(r, sh[0])); link(sh[0], sh[1]); link(sh[1], rd[0]); link(rd[0], rd[1]); link(rd[1], rd[2]);
+  let starts = bat;
+  if (fc){
+    const t1 = ring('h2tank', -7, .7, 6), t2 = ring('h2tank', -6, .7, 6);
+    t1.forEach((a, i) => link(a, t2[i]));
+    const pl = Array.from({length: 6}, (_, k) => [-1, 0, 1].map(j => add('fuelcell', -4.4 + k*.35, j*.5, 0)));
+    t2.forEach((a, i) => link(a, pl[0][i % 3]));
+    for (let k = 0; k < 5; k++) pl[k].forEach((a, j) => link(a, pl[k+1][j]));
+    pl[5].forEach((a, j) => link(a, inv[j]));
+    starts = t1;
+  }
+  return fin(m, starts, 1.2, 70);
+}
+
+const ENGINES = {
+  i3: {title: 'Inline-3', text: 'Three cylinders in a row. Compact and light, so it is popular in small cars, usually with a turbocharger.', facts: ['Often fitted with balancing tricks to tame its natural vibration.'], keys: ['inline 3', 'straight 3', '3 cylinder', 'three cylinder', 'i3'], build: () => buildICE({banks: [[0, 3]]})},
+  i4: {title: 'Inline-4', text: 'The most common car engine. Four cylinders in a line fire in turn, giving a good balance of cost, size and smoothness. Press the air in at the left, watch it burn in the cylinders and leave as exhaust.', facts: ['Fitted to everything from small hatchbacks to family SUVs.'], keys: ['inline 4', 'straight 4', '4 cylinder', 'four cylinder', 'i4'], build: () => buildICE({banks: [[0, 4]]})},
+  i6: {title: 'Inline-6', text: 'Six cylinders in a row. Naturally balanced and very smooth, but long, so it needs a lot of room under the bonnet.', facts: ['Its firing order cancels vibration without balance shafts.'], keys: ['inline 6', 'straight 6', '6 cylinder', 'six cylinder', 'i6'], build: () => buildICE({banks: [[0, 6]]})},
+  v6: {title: 'V6', text: 'Two banks of three cylinders at an angle, sharing one crankshaft. Much shorter than an inline-6, so it fits sideways in front-wheel-drive cars.', facts: ['Common in family cars, SUVs and sports cars.'], keys: ['v6'], build: () => buildICE({banks: [[-30, 3], [30, 3]]})},
+  v8: {title: 'V8', text: 'Two banks of four cylinders in a 90° V. Smooth, with strong pulling force at low rpm and a deep sound.', facts: ['Most American V8s use a cross-plane crank, which gives their classic rumble.'], keys: ['v8'], build: () => buildICE({banks: [[-45, 4], [45, 4]]})},
+  v10: {title: 'V10', text: 'Two banks of five cylinders. A smooth, high-revving layout used in a few supercars.', facts: ['Used by Lamborghini and Audi sports cars.'], keys: ['v10'], build: () => buildICE({banks: [[-45, 5], [45, 5]]})},
+  v12: {title: 'V12', text: 'Two banks of six cylinders. Naturally balanced and extremely smooth, but large and thirsty.', facts: ['Used by Ferrari, Lamborghini and Rolls-Royce.'], keys: ['v12'], build: () => buildICE({banks: [[-30, 6], [30, 6]]})},
+  w16: {title: 'W16', text: 'Four banks of four cylinders in a compact W shape on a single crankshaft: two narrow V8s joined together.', facts: ['Used in the Bugatti Veyron and Chiron.'], keys: ['w16', 'w12'], build: () => buildICE({banks: [[-52, 4], [-38, 4], [38, 4], [52, 4]]})},
+  boxer: {title: 'Flat-6 (boxer)', text: 'Cylinders lie flat in two opposing banks, moving in and out like a boxer’s punches. The engine sits low and wide.', facts: ['Porsche 911s use a flat-6 and Subarus use a flat-4.'], keys: ['boxer', 'flat 6', 'flat 4', 'flat engine'], build: () => buildICE({banks: [[-90, 3], [90, 3]]})},
+  rotary: {title: 'Rotary (Wankel)', text: 'A triangular rotor spins inside an oval housing instead of pistons moving up and down. Very smooth and compact, but it uses more fuel and oil.', facts: ['Mazda used it in the RX-7 and RX-8.'], keys: ['rotary', 'wankel', 'rx 7', 'rx 8'], build: buildRotary},
+  diesel: {title: 'Diesel (turbo)', text: 'No spark plugs: compressing the air heats it enough to ignite the injected fuel. More efficient and torquey than petrol, and most diesels add a turbocharger.', facts: ['Compression ratios of about 15 to 20 to 1 heat the air enough to ignite the fuel.'], keys: ['diesel', 'tdi'], build: () => buildICE({banks: [[0, 4]], turbo: true})},
+  hybrid: {title: 'Hybrid (petrol + electric)', text: 'A petrol engine and an electric motor share the work. The motor helps when accelerating and a small battery recovers energy from braking.', facts: ['The Toyota Prius popularised this layout.'], keys: ['hybrid', 'prius'], build: () => buildICE({banks: [[0, 4]], hybrid: true})},
+  electric: {title: 'Electric motor (EV)', text: 'No combustion at all. A battery feeds an inverter, which drives a motor through a rotating magnetic field. It has very few moving parts.', facts: ['It can also work as a generator and recover energy when braking.'], keys: ['electric', 'ev', 'electric car', 'electric motor'], build: () => buildEV(false)},
+  fuelcell: {title: 'Hydrogen fuel cell', text: 'Hydrogen reacts with oxygen in a fuel cell stack to make electricity for an electric motor. The only exhaust is water.', facts: ['The Toyota Mirai and Hyundai Nexo use fuel cells.'], keys: ['fuel cell', 'hydrogen', 'fcev'], build: () => buildEV(true)}
+};
+Object.assign(TOPICS, ENGINES);
+
+/* ---------- scene object ---------- */
+let group = null, G = null, pulses = [], pulseGeo = null, nodeGeo = null, selected = null, lineGeo = null, ex = 0, exTarget = 0, frameMat = null;
+function disposeGroup(){
+  if (!group) return;
+  scene.remove(group);
+  group.traverse(o => { o.geometry && o.geometry.dispose(); o.material && o.material.dispose(); });
+}
+function show(kind){
+  disposeGroup();
+  G = kind === 'ai' ? buildAI() : kind === 'dc' ? buildDC() : ENGINES[kind] ? ENGINES[kind].build() : buildBrain();
+  G.kind = kind;
+  G.base = G.nodes.map(n => n.clone());
+  ex = exTarget = 0; exBtn.setAttribute('aria-pressed', 'false');
+  group = new THREE.Group();
+
+  const lp = [];
+  G.edges.forEach(([a, b]) => lp.push(G.nodes[a].x,G.nodes[a].y,G.nodes[a].z, G.nodes[b].x,G.nodes[b].y,G.nodes[b].z));
+  const lg = lineGeo = new THREE.BufferGeometry();
+  lg.setAttribute('position', new THREE.Float32BufferAttribute(lp, 3));
+  group.add(new THREE.LineSegments(lg, new THREE.LineBasicMaterial({color: G.lineColor, transparent: true, opacity: .22, blending: THREE.AdditiveBlending, depthWrite: false})));
+
+  const np = []; G.nodes.forEach(p => np.push(p.x, p.y, p.z));
+  const ng = new THREE.BufferGeometry();
+  ng.setAttribute('position', new THREE.Float32BufferAttribute(np, 3));
+  ng.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(np.length), 3));
+  nodeGeo = ng; selected = null; paint();
+  group.add(new THREE.Points(ng, new THREE.PointsMaterial({vertexColors: true, size: ({ai: .55, dc: .42})[kind] || (ENGINES[kind] ? .34 : .28), map: GLOW, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true})));
+
+  pulses = [];
+  for (let i = 0; i < G.pulses; i++){
+    const p = {a: 0, b: 0, t: Math.random(), v: 1};
+    respawn(p); p.t = Math.random(); pulses.push(p);
+  }
+  pulseGeo = new THREE.BufferGeometry();
+  pulseGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(G.pulses*3), 3));
+  group.add(new THREE.Points(pulseGeo, new THREE.PointsMaterial({color: 0xffb347, size: ({ai: .8, dc: .7})[kind] || (ENGINES[kind] ? .55 : .45), map: GLOW, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true})));
+
+  frameMat = null;
+  if (kind === 'dc'){
+    const eg = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.3, 5.7, 1.6));
+    frameMat = new THREE.LineBasicMaterial({color: 0x6fb8ff, transparent: true, opacity: .3, blending: THREE.AdditiveBlending, depthWrite: false});
+    for (let i = 0; i < 8; i++){
+      const f = new THREE.LineSegments(eg, frameMat);
+      f.position.set((i - 3.5) * 2, -.75, i % 2 ? 1 : -1);
+      group.add(f);
+    }
+  }
+  group.traverse(o => { o.frustumCulled = false; });
+  scene.add(group);
+  setInfo(TOPICS[kind]);
+  buildLegend(kind);
+  engSel.value = ENGINES[kind] ? kind : '';
+}
+function setInfo(T){
+  document.getElementById('t').textContent = T.title;
+  document.getElementById('d').textContent = T.text;
+  document.getElementById('l').innerHTML = T.facts.map(f => '<li>' + f + '</li>').join('');
+}
+function paint(){
+  const arr = nodeGeo.attributes.color.array;
+  G.nodes.forEach((_, i) => {
+    const id = G.reg ? G.reg[i] : null, c = id ? REGION_BY_ID[id].rgb : [.56, .94, 1];
+    const k = !selected || id === selected ? 1 : .14;
+    arr[i*3] = c[0]*k; arr[i*3+1] = c[1]*k; arr[i*3+2] = c[2]*k;
+  });
+  nodeGeo.attributes.color.needsUpdate = true;
+}
+function select(id){
+  selected = id; paint(); setInfo(REGION_BY_ID[id]);
+  document.querySelectorAll('#regions button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.id === id)));
+}
+function clearSel(){
+  selected = null; paint(); setInfo(TOPICS[G.kind]);
+  document.querySelectorAll('#regions button').forEach(b => b.setAttribute('aria-pressed', 'false'));
+}
+function pick(id){
+  if (!G.reg || !G.reg.includes(id)) show(REGION_BY_ID[id].home);
+  selected === id ? clearSel() : select(id);
+}
+const rg = document.getElementById('regions');
+function buildLegend(kind){
+  rg.innerHTML = '';
+  const list = G.reg ? REGIONS.filter(r => G.reg.includes(r.id)) : [];
+  rg.style.display = list.length ? '' : 'none';
+  list.forEach(r => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.dataset.id = r.id; b.setAttribute('aria-pressed', 'false');
+    b.innerHTML = '<i style="background:' + r.color + '"></i>' + r.title;
+    b.addEventListener('click', () => pick(r.id));
+    rg.appendChild(b);
+  });
+}
+const exBtn = document.getElementById('ex');
+exBtn.addEventListener('click', () => {
+  if (!G.reg) show('brain');
+  exTarget = exTarget ? 0 : 1;
+  exBtn.setAttribute('aria-pressed', String(!!exTarget));
+});
+function applyExplode(){
+  if (!G.reg) return;
+  const np = nodeGeo.attributes.position.array, lp = lineGeo.attributes.position.array;
+  G.nodes.forEach((n, i) => {
+    const b = G.base[i], o = REGION_BY_ID[G.reg[i]].off, sg = b.x < 0 ? -1 : 1;
+    n.set(b.x + o[0]*sg*ex, b.y + o[1]*ex, b.z + o[2]*ex);
+    np[i*3] = n.x; np[i*3+1] = n.y; np[i*3+2] = n.z;
+  });
+  G.edges.forEach(([a, b], k) => {
+    const A = G.nodes[a], B = G.nodes[b];
+    lp[k*6] = A.x; lp[k*6+1] = A.y; lp[k*6+2] = A.z; lp[k*6+3] = B.x; lp[k*6+4] = B.y; lp[k*6+5] = B.z;
+  });
+  nodeGeo.attributes.position.needsUpdate = true; lineGeo.attributes.position.needsUpdate = true;
+}
+const lbl = {};
+REGIONS.forEach(r => {
+  const d = document.createElement('div'); d.textContent = r.title; d.style.color = r.color; d.style.display = 'none';
+  document.getElementById('labels').appendChild(d); lbl[r.id] = d;
+});
+function placeLabels(){
+  const sum = {}, cnt = {};
+  if (G.reg && ex > .02) G.nodes.forEach((n, i) => { const id = G.reg[i]; (sum[id] = sum[id] || new THREE.Vector3()).add(n); cnt[id] = (cnt[id] || 0) + 1; });
+  REGIONS.forEach(r => {
+    const d = lbl[r.id];
+    if (!sum[r.id]){ d.style.display = 'none'; return; }
+    const v = sum[r.id].multiplyScalar(1 / cnt[r.id]); group.localToWorld(v); v.project(camera);
+    d.style.display = 'block'; d.style.opacity = Math.min(1, ex * 1.4);
+    d.style.transform = 'translate(' + ((v.x*.5+.5)*innerWidth + 6) + 'px,' + ((-v.y*.5+.5)*innerHeight - 8) + 'px)';
+  });
+}
+function pickAt(x, y){
+  if (!G.reg) return;
+  let best = null, bz = 2;
+  const v = new THREE.Vector3();
+  G.nodes.forEach((p, i) => {
+    v.copy(p); group.localToWorld(v); v.project(camera);
+    const d = Math.hypot((v.x*.5+.5)*innerWidth - x, (-v.y*.5+.5)*innerHeight - y);
+    if (d < 24 && v.z < bz){ bz = v.z; best = i; }
+  });
+  if (best === null) clearSel();
+  else { const id = G.reg[best]; selected === id ? clearSel() : select(id); }
+}
+function respawn(p){
+  p.a = G.starts[rnd(G.starts.length)];
+  p.b = G.adj[p.a][rnd(G.adj[p.a].length)];
+  p.t = 0; p.v = G.speed * (.7 + Math.random()*.6);
+}
+function advance(p){
+  const opts = G.adj[p.b].filter(n => n !== p.a);
+  if (!opts.length || (!G.directed && Math.random() < .03)) return respawn(p);
+  p.a = p.b; p.b = opts[rnd(opts.length)];
+  p.t = 0; p.v = G.speed * (.7 + Math.random()*.6);
+}
+
+/* ---------- search ---------- */
+function search(text){
+  const w = text.toLowerCase().split(/\W+/);
+  const hit = k => TOPICS[k].keys.some(x => w.includes(x));
+  const lc = text.toLowerCase();
+  if (w.includes('neural') && w.includes('network')) return show('ai');
+  if (/data ?cent(er|re)|server farm/.test(lc)) return show('dc');
+  const nt = ' ' + lc.replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
+  const en = Object.keys(ENGINES).find(k => ENGINES[k].keys.some(x => nt.includes(' ' + x + ' ')));
+  if (en) return show(en);
+  if (/\bengines?\b/.test(lc)) return show('i4');
+  const r = REGIONS.find(r => r.keys.some(k => lc.includes(k)));
+  if (r) return pick(r.id);
+  if (hit('brain')) return show('brain');
+  if (hit('ai')) return show('ai');
+  document.getElementById('t').textContent = 'No match yet';
+  document.getElementById('d').textContent = 'Try “brain” or “neural network”.';
+  document.getElementById('l').innerHTML = '';
+}
+document.getElementById('f').addEventListener('submit', e => { e.preventDefault(); search(document.getElementById('q').value); });
+document.querySelectorAll('.chips button[data-q]').forEach(b => b.addEventListener('click', () => { document.getElementById('q').value = b.dataset.q; search(b.dataset.q); }));
+
+/* ---------- mouse: wheel zoom + drag rotate ---------- */
+const clampZoom = z => Math.min(Math.max(z, .4), 4);
+canvas.addEventListener('wheel', e => { e.preventDefault(); zoomTarget = clampZoom(zoomTarget * Math.exp(-e.deltaY*.001)); }, {passive: false});
+let drag = false, lx = 0, spin = 0, sx = 0, sy = 0;
+canvas.addEventListener('pointerdown', e => { drag = true; lx = sx = e.clientX; sy = e.clientY; });
+addEventListener('pointerup', e => {
+  if (drag && e.target === canvas && Math.hypot(e.clientX - sx, e.clientY - sy) < 5) pickAt(e.clientX, e.clientY);
+  drag = false;
+});
+addEventListener('pointermove', e => { if (drag){ spin += (e.clientX - lx) * .005; lx = e.clientX; } });
+
+/* ---------- hand-tracking zoom ---------- */
+const st = document.getElementById('st'), video = document.getElementById('v'), ov = document.getElementById('o'), octx = ov.getContext('2d');
+let prevDist = null;
+function onHands(res){
+  octx.clearRect(0, 0, ov.width, ov.height);
+  const hands = res.multiHandLandmarks || [], pts = [];
+  hands.forEach(lm => {
+    const size = Math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y) || 1;
+    const pinch = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y) / size < .4;
+    const p = {x: (lm[4].x + lm[8].x)/2, y: (lm[4].y + lm[8].y)/2, pinch};
+    octx.fillStyle = pinch ? '#ffb347' : '#8fefff';
+    octx.beginPath(); octx.arc(p.x*ov.width, p.y*ov.height, 9, 0, 7); octx.fill();
+    pts.push(p);
+  });
+  if (pts.length === 2 && pts[0].pinch && pts[1].pinch){
+    const d = Math.hypot((pts[0].x-pts[1].x)*ov.width, (pts[0].y-pts[1].y)*ov.height) / ov.width;
+    octx.strokeStyle = '#ffb347'; octx.lineWidth = 3; octx.beginPath();
+    octx.moveTo(pts[0].x*ov.width, pts[0].y*ov.height); octx.lineTo(pts[1].x*ov.width, pts[1].y*ov.height); octx.stroke();
+    if (prevDist !== null) zoomTarget = clampZoom(zoomTarget * Math.exp((d - prevDist) * 3.5));
+    prevDist = d;
+    st.textContent = 'Zooming: move your hands apart or together.';
+  } else {
+    prevDist = null;
+    st.textContent = pts.length < 2 ? 'Show both hands to the camera.' : 'Pinch thumb and index finger on both hands.';
+  }
+}
+const goBtn = document.getElementById('go');
+let handsObj = null, camObj = null;
+function stopHands(){
+  try { camObj && camObj.stop(); } catch (e) {}
+  if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+  video.srcObject = null;
+  try { handsObj && handsObj.close(); } catch (e) {}
+  handsObj = camObj = null; prevDist = null;
+  octx.clearRect(0, 0, ov.width, ov.height);
+  document.getElementById('pip').hidden = true;
+  goBtn.textContent = 'Turn on hand zoom';
+  st.textContent = 'Hand zoom is off. Scroll wheel and drag still work.';
+}
+goBtn.addEventListener('click', async () => {
+  if (camObj){ stopHands(); return; }
+  if (typeof Hands === 'undefined'){ st.textContent = 'Hand tracking library did not load. Check your internet connection.'; return; }
+  try {
+    const hands = handsObj = new Hands({locateFile: f => 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/' + f});
+    hands.setOptions({maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: .6, minTrackingConfidence: .5});
+    hands.onResults(onHands);
+    st.textContent = 'Starting camera…';
+    const cam = camObj = new Camera(video, {onFrame: async () => { await hands.send({image: video}); }, width: 640, height: 480});
+    await cam.start();
+    document.getElementById('pip').hidden = false;
+    goBtn.textContent = 'Turn off hand zoom';
+    st.textContent = 'Show both hands to the camera.';
+  } catch (err){
+    camObj = handsObj = null; st.textContent = 'Camera unavailable: allow camera access and open this page over http://localhost.';
+  }
+});
+
+/* ---------- render loop ---------- */
+const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+let last = performance.now(), yaw = 0;
+const zr = document.getElementById('zr');
+const engSel = document.getElementById('eng');
+Object.keys(ENGINES).forEach(k => { const o = document.createElement('option'); o.value = k; o.textContent = ENGINES[k].title; engSel.appendChild(o); });
+engSel.addEventListener('change', () => { if (engSel.value) show(engSel.value); });
+show('brain');
+(function loop(now){
+  requestAnimationFrame(loop);
+  const dt = Math.min((now - last)/1000, .05); last = now;
+  zoom += (zoomTarget - zoom) * .12;
+  const pe = ex; ex += (exTarget - ex) * .08;
+  if (Math.abs(exTarget - ex) < .002) ex = exTarget;
+  if (ex !== pe) applyExplode();
+  camera.position.set(0, 1.5, BASE * (1 + .65*ex) / zoom);
+  camera.lookAt(0, 0, 0);
+  yaw += calm ? 0 : dt * .18;
+  group.rotation.y = yaw + spin;
+
+  const arr = pulseGeo.attributes.position.array;
+  pulses.forEach((p, i) => {
+    p.t += dt * p.v;
+    if (p.t >= 1) advance(p);
+    const A = G.nodes[p.a], B = G.nodes[p.b];
+    arr[i*3] = A.x + (B.x-A.x)*p.t; arr[i*3+1] = A.y + (B.y-A.y)*p.t; arr[i*3+2] = A.z + (B.z-A.z)*p.t;
+  });
+  pulseGeo.attributes.position.needsUpdate = true;
+  if (frameMat) frameMat.opacity = .3 * (1 - ex);
+  placeLabels();
+  zr.textContent = 'Zoom ' + zoom.toFixed(1) + '×';
+  renderer.render(scene, camera);
+})(performance.now());
+</script>
+</body>
+</html>
